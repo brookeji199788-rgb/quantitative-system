@@ -11,10 +11,9 @@ build/
 venv/
 env/
 
-# 数据文件（体积大，不纳入版本控制）
-财联社数据/*.json
-财联社数据/*.csv
-cls_py/cls_review_daily.json
+# 数据文件（爬虫原始输出，体积大）
+财联社数据/cls_review_2*.json
+财联社数据/cls_review_2*.csv
 
 # IDE
 .vscode/
