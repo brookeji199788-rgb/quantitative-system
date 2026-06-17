@@ -11,13 +11,25 @@ import io
 import os
 
 # ── 正则模式 ────────────────────────────────────────────────
-BOARD_PAT  = re.compile(r'\d+天\d+板|\d+连板|首板')
-PCT_PAT    = re.compile(r'^\d+\.?\d*%$')
-TIME_PAT   = re.compile(r'^\d{1,2}:\s*\d{2}$')
-CODE_PAT   = re.compile(r'^\d{6}$')
-ATTR_PAT   = re.compile(r'^归因[：:](.*)$')
-HEADER_KW  = {'板数', '涨跌幅', '股票名称', '涨停时间', '上涨逻辑', '名称', '市场焦点股'}
-SKIP_KW    = {'财联社大涨股解读', '今日涨停分析图', '土频道', '股市频道', '股市频造'}
+BOARD_PAT       = re.compile(r'\d+天\d+板|\d+连板|首板')
+PCT_PAT         = re.compile(r'^\d+\.?\d*%$')
+TIME_PAT        = re.compile(r'^\d{1,2}:\s*\d{2}$')
+CODE_PAT        = re.compile(r'^\d{6}$')
+ATTR_PAT        = re.compile(r'^归因[：:](.*)$')
+HEADER_KW       = {'板数', '涨跌幅', '股票名称', '涨停时间', '上涨逻辑', '名称', '市场焦点股'}
+SKIP_KW         = {'财联社大涨股解读', '今日涨停分析图', '土频道', '股市频道', '股市频造'}
+# OCR 有时先读到概念词再读到股票名，导致 name/logic 互换的检测模式
+_CONCEPT_SIGNAL = re.compile(r'[+＋A-Za-z]')   # 含+或英文 → 大概率是概念词而非股票名
+_PURE_CN_NAME   = re.compile(r'^[一-鿿]{2,6}$') # 纯汉字2-6字 → 股票名特征
+
+
+def _fix_name_logic(cur: dict) -> dict:
+    """OCR读序错误时 name/logic 会互换，在 CODE 行触发后做后置修正。"""
+    name  = cur.get('name', '')
+    logic = cur.get('logic', '')
+    if name and logic and _CONCEPT_SIGNAL.search(name) and _PURE_CN_NAME.match(logic):
+        cur['name'], cur['logic'] = logic, name
+    return cur
 
 
 # ── 1. 主线热点 (content_text) ─────────────────────────────
@@ -58,6 +70,7 @@ def parse_focus_stocks(ocr_text: str) -> list[dict]:
 
         if CODE_PAT.match(line):
             cur['code'] = line
+            cur = _fix_name_logic(cur)
             if cur.get('name'):
                 stocks.append(cur)
             cur = {}
@@ -83,6 +96,7 @@ def _parse_stock_entries(stock_lines: list[str]) -> list[dict]:
             continue
         if CODE_PAT.match(line):
             cur['code'] = line
+            cur = _fix_name_logic(cur)
             if cur.get('name'):
                 stocks.append(cur)
             cur = {}
