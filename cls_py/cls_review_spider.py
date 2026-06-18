@@ -127,6 +127,8 @@ def extract_images(content_html: str) -> list[str]:
     return re.findall(r'<img[^>]+src=["\']([^"\']+)["\']', content_html)
 
 
+_OCR_SLICE_H = 2000  # 超过此高度时按切片分段 OCR，避免长图识别乱码
+
 def ocr_image_url(url: str, reader) -> str:
     """下载图片并用 RapidOCR 识别文字，返回合并后的文本"""
     from PIL import Image
@@ -134,11 +136,21 @@ def ocr_image_url(url: str, reader) -> str:
     import io
     resp = requests.get(url, headers=HEADERS, timeout=20)
     resp.raise_for_status()
-    img = np.array(Image.open(io.BytesIO(resp.content)).convert("RGB"))
-    result, _ = reader(img)
-    if not result:
-        return ""
-    return "\n".join(line[1] for line in result)
+    pil_img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    w, h = pil_img.size
+
+    if h <= _OCR_SLICE_H:
+        result, _ = reader(np.array(pil_img))
+        return "\n".join(line[1] for line in result) if result else ""
+
+    # 长图：按切片逐段识别后合并
+    lines = []
+    for y in range(0, h, _OCR_SLICE_H):
+        crop = np.array(pil_img.crop((0, y, w, min(y + _OCR_SLICE_H, h))))
+        result, _ = reader(crop)
+        if result:
+            lines.extend(line[1] for line in result)
+    return "\n".join(lines)
 
 
 def init_ocr_reader():
