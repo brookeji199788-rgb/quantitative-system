@@ -24,6 +24,15 @@ from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
+# 读取同目录下的 .env 文件（比 bat 里 set 更可靠）
+_env_file = Path(__file__).parent / '.env'
+if _env_file.exists():
+    for _line in _env_file.read_text(encoding='utf-8').splitlines():
+        _line = _line.strip()
+        if _line and not _line.startswith('#') and '=' in _line:
+            _k, _, _v = _line.partition('=')
+            os.environ.setdefault(_k.strip(), _v.strip())
+
 # ── 路径 / 配置 ───────────────────────────────────────────────
 ROOT      = Path(__file__).parent
 DATA_FILE = ROOT / 'data' / 'cls_review_daily.json'
@@ -158,6 +167,16 @@ def build_code_map() -> dict:
 
 HAS_PLUS = re.compile(r'[+＋]')
 PURE_CN  = re.compile(r'^[一-鿿]{2,6}$')
+# 扩展股票名模式：含 N/XD/DR 前缀、A/B 后缀、英文缩写混排等
+STOCK_NAME = re.compile(
+    r'^(?:'
+    r'[一-鿿]{2,6}'               # 纯汉字
+    r'|[一-鿿]{2,5}[A-Ca-c]'     # 汉字+A/B/C股
+    r'|(?:N|XD|DR)[一-鿿]{1,5}'  # 新股/除权/DR前缀
+    r'|[A-Z]{2,5}[一-鿿]{2,4}'   # 缩写前缀+汉字
+    r'|[一-鿿]{2,4}[A-Z]{2,5}'   # 汉字+缩写后缀
+    r')$'
+)
 
 
 def fix_record(rec: dict, code_map: dict) -> dict:
@@ -169,20 +188,39 @@ def fix_record(rec: dict, code_map: dict) -> dict:
     if not name or not logic:
         return rec
 
-    # ① mootdx 代码反查
+    # ⓪ OCR截断残留：name为单字（如"体"来自"半导体"），logic是真实股票名
+    #    无需 code_map，STOCK_NAME 匹配即可确认互换安全
+    if len(name) == 1 and STOCK_NAME.match(logic):
+        rec['name'], rec['logic'] = logic, name
+        return rec
+
+    # ① name 以 + 开头：模式优先（保留 N/XD/DR 等历史名），code_map 仅兜底
+    if re.match(r'^[+＋]', name):
+        if STOCK_NAME.match(logic):
+            # 模式匹配成功 → 互换，保留历史名（N惠通、XD乐惠国等）
+            rec['name'], rec['logic'] = logic, name.lstrip('+＋')
+            return rec
+        if code and code in code_map:
+            real = code_map[code]
+            if PURE_CN.match(real):   # 只接受纯汉字，避免指数代码污染
+                rec['name'] = real
+                rec['logic'] = name.lstrip('+＋')
+                return rec
+
+    # ② mootdx 代码反查（适用于 name 不以 + 开头的错位情形）
     if code and code in code_map:
         real = code_map[code]
         logic_match = (logic == real) or (real in logic) or (logic in real)
         name_match  = (name  == real) or (real in name)  or (name  in real)
         if logic_match and not name_match:
-            rec['name'], rec['logic'] = logic, name
+            rec['name'], rec['logic'] = logic, name.lstrip('+＋')
             return rec
 
-    # ② name 含 + 或英文概念词 → 互换
+    # ③ 原有宽泛检测（name含英文概念词，logic纯汉字）
     if (HAS_PLUS.search(name) or (re.search(r'[A-Za-z]', name)
                                    and not re.match(r'^[一-鿿]{2,5}[AB]$', name))):
         if PURE_CN.match(logic):
-            rec['name'], rec['logic'] = logic, name
+            rec['name'], rec['logic'] = logic, name.lstrip('+＋')
 
     return rec
 

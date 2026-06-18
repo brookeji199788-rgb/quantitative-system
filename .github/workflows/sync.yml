@@ -1,0 +1,22 @@
+name: 同步财联社数据到 Supabase
+
+on:
+  push:
+    paths:
+      - 'data/cls_review_daily.json'  # 只有这个文件更新才触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: pip install supabase
+
+      - name: 同步最新数据到 Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python sync_to_supabase.py

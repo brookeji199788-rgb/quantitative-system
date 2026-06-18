@@ -21,14 +21,35 @@ SKIP_KW         = {'财联社大涨股解读', '今日涨停分析图', '土频�
 # OCR 有时先读到概念词再读到股票名，导致 name/logic 互换的检测模式
 _CONCEPT_SIGNAL = re.compile(r'[+＋A-Za-z]')   # 含+或英文 → 大概率是概念词而非股票名
 _PURE_CN_NAME   = re.compile(r'^[一-鿿]{2,6}$') # 纯汉字2-6字 → 股票名特征
+# 扩展股票名模式：含 N/XD/DR 前缀、A/B 后缀、英文缩写混排等
+_STOCK_NAME_PAT = re.compile(
+    r'^(?:'
+    r'[一-鿿]{2,6}'               # 纯汉字: 格力电器
+    r'|[一-鿿]{2,5}[A-Ca-c]'     # 汉字+A/B/C股: 深康佳A
+    r'|(?:N|XD|DR)[一-鿿]{1,5}'  # 新股/除权/DR前缀: N惠通 XD乐惠国 DR快克智
+    r'|[A-Z]{2,5}[一-鿿]{2,4}'   # 缩写前缀+汉字: GQY视讯 IDC电源
+    r'|[一-鿿]{2,4}[A-Z]{2,5}'   # 汉字+缩写后缀: 液冷IDC
+    r')$'
+)
 
 
 def _fix_name_logic(cur: dict) -> dict:
     """OCR读序错误时 name/logic 会互换，在 CODE 行触发后做后置修正。"""
     name  = cur.get('name', '')
     logic = cur.get('logic', '')
-    if name and logic and _CONCEPT_SIGNAL.search(name) and _PURE_CN_NAME.match(logic):
+    if not (name and logic):
+        return cur
+    # OCR行截断残留：name为单字（如"体"来自"半导体"），logic为真实股票名
+    if len(name) == 1 and _STOCK_NAME_PAT.match(logic):
         cur['name'], cur['logic'] = logic, name
+        return cur
+    # 原有：name含+或英文概念词，logic为纯汉字股票名
+    if _CONCEPT_SIGNAL.search(name) and _PURE_CN_NAME.match(logic):
+        cur['name'], cur['logic'] = logic, name.lstrip('+＋')
+        return cur
+    # 扩展：name以+开头（OCR概念前缀），logic为含字母变体的股票名
+    if re.match(r'^[+＋]', name) and _STOCK_NAME_PAT.match(logic):
+        cur['name'], cur['logic'] = logic, name.lstrip('+＋')
     return cur
 
 
@@ -81,7 +102,8 @@ def parse_focus_stocks(ocr_text: str) -> list[dict]:
         elif TIME_PAT.match(line.replace(' ', '')):
             cur['time'] = line.replace(' ', '')
         elif not cur.get('name'):
-            cur['name'] = line
+            if len(line) >= 2:  # 单字是OCR截断残留，不能作为股票名
+                cur['name'] = line
         else:
             cur.setdefault('logic', line)
 
@@ -107,7 +129,8 @@ def _parse_stock_entries(stock_lines: list[str]) -> list[dict]:
         elif TIME_PAT.match(line):
             cur['time'] = line
         elif not cur.get('name'):
-            cur['name'] = line
+            if len(line) >= 2:  # 单字是OCR截断残留，不能作为股票名
+                cur['name'] = line
         else:
             cur.setdefault('logic', line)
     return stocks
